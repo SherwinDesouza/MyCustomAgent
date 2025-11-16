@@ -204,10 +204,3 @@ See `requirements.txt` for the complete list. Main dependencies include:
 - `python-dotenv` - Environment variable management
 - `requests` - HTTP requests for RapidAPI
 
-## License
-
-[Add your license here]
-
-## Contributing
-
-[Add contribution guidelines here]
