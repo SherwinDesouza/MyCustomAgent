@@ -8,6 +8,10 @@ import requests
 import os
 import google.genai as genai
 from google.genai import types
+from typing import Optional, Dict, Any
+from bs4 import BeautifulSoup
+from ddgs import DDGS
+from Scraper import _fetch_html,_clean_text,_word_snippet,_find_nearby_urls
 load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 RAPID_API_KEY = os.getenv("RAPID_API_KEY")
@@ -218,5 +222,188 @@ def reverse_string(text:str) -> str:
     returns: the reversed text
     """
     return text[::-1]
-TOOLS = [calculator, python_tool, convert_audio_to_text, list_attached_files, read_python_file, SpeechToText, gemini_vision,reverse_string]
+
+@tool
+def web_search(user_query: str) -> str:
+    """
+    This tool is to perform a web search using DuckDuckGo and return top results as a JSON string.
+
+    Args:
+        user_query (str): The search query.
+
+    Returns:
+        str: JSON string containing a list of search results.
+             Each result is a dictionary with keys: "title", "href", "body".
+             "body" is truncated to the first ~20 words.
+    """
+    try:
+        results = DDGS().text(user_query, max_results=4, region="us-en")
+        truncated = []
+
+        for item in results:
+            body = item.get("body", "")
+            short_body = " ".join(body.split()[:20])
+
+            truncated.append({
+                "title": item.get("title", ""),
+                "href": item.get("href", ""),
+                "body": short_body
+            })
+
+        # Return as JSON string for Groq/LLM compatibility
+        return json.dumps(truncated)
+
+    except Exception as e:
+        error_msg = {
+            "status": "error",
+            "message": f"Web search failed: {str(e)}"
+        }
+        return json.dumps(error_msg)
+
+@tool
+def scrape_data(url: str,
+                selector: Optional[str] = None,
+                keyword: Optional[str] = None,
+                js: bool = False,
+                max_snippets: int = 5,
+                window_words: int = 20) -> Dict[str, Any]:
+    """
+    Scrape a webpage and extract content based on different modes.
+    
+    This tool can operate in three modes:
+    1. Initial exploration: Returns page headings and available selectors (when both selector and keyword are None)
+    2. Keyword search: Finds text snippets containing the keyword with context (when keyword is provided)
+    3. CSS selector extraction: Extracts content matching a CSS selector (when selector is provided)
+    
+    Args:
+        url (str): The URL of the webpage to scrape.
+        selector (Optional[str]): CSS selector to extract specific elements (e.g., "article", "table", ".class-name").
+                                  If None and keyword is also None, returns page structure info.
+        keyword (Optional[str]): Search for a specific keyword in the page text. Returns snippets with context.
+        js (bool): Whether to render JavaScript (requires Playwright). Default is False.
+        max_snippets (int): Maximum number of snippets to return. Default is 5.
+        window_words (int): Number of words before and after keyword match to include in snippet. Default is 20.
+    
+    Returns:
+        Dict[str, Any]: A dictionary with the following structure:
+            - status: "ok", "error", "not_found"
+            - snippets: List of keyword-based text snippets with nearby URLs (if keyword search)
+            - selector_results: List of extracted content from CSS selectors (if selector used)
+            - headings: List of page headings h1, h2, h3 (if initial exploration)
+            - selectors_hint: List of available selectors found on page (if initial exploration)
+            - meta: Dictionary with fetched_url and final_url
+            - error/note: Error message or note if something went wrong
+    
+    Usage Notes (for the agent):
+        - First call with only url to explore page structure (get headings and selector hints)
+        - Use keyword parameter to search for specific text content
+        - Use selector parameter to extract structured content (tables, articles, lists, etc.)
+        - Set js=True if the page requires JavaScript rendering
+        - Combine with web_search() to find relevant URLs first, then scrape them
+    """
+
+    fetched = _fetch_html(url, js=js)
+    if "error" in fetched:
+        return {"status": "error", "error": fetched["error"], "meta": {"fetched_url": url}}
+
+    html = fetched["html"]
+    final_url = fetched.get("final_url", url)
+    soup = BeautifulSoup(html, "html.parser")
+
+    for tag in soup(["script", "style", "noscript", "iframe"]):
+        tag.decompose()
+
+    page_text = _clean_text(soup.get_text(" ", strip=True))
+
+    result = {
+        "status": "ok",
+        "snippets": [],
+        "selector_results": [],
+        "headings": [],
+        "meta": {"fetched_url": url, "final_url": final_url}
+    }
+
+    # CASE 1 ------------------ Initial call (no keyword + no selector)
+    if not selector and not keyword:
+        headings = [h.get_text(" ", strip=True) for h in soup.select("h1, h2, h3")][:40]
+        selectors_found = []
+
+        for sel in ["table", "article", "main", "ul", "ol"]:
+            if soup.select_one(sel):
+                selectors_found.append(sel)
+
+        result["headings"] = headings
+        result["selectors_hint"] = selectors_found
+        return result
+
+    # CASE 2 ------------------ Keyword search
+    if keyword:
+        low = page_text.lower()
+        kw = keyword.lower()
+
+        matches = []
+        start = 0
+        while len(matches) < max_snippets:
+            idx = low.find(kw, start)
+            if idx == -1:
+                break
+            matches.append((idx, idx + len(kw)))
+            start = idx + len(kw)
+
+        if matches:
+            for span in matches:
+                snippet, _, _ = _word_snippet(page_text, span, window_words=window_words)
+
+                element = None
+                for el in soup.find_all():
+                    try:
+                        if kw in el.get_text(" ", strip=True).lower():
+                            element = el
+                            break
+                    except:
+                        continue
+
+                urls = _find_nearby_urls(soup, element) if element else []
+
+                result["snippets"].append({
+                    "text": snippet,
+                    "urls": urls
+                })
+
+            return result
+
+        else:
+            if not selector:
+                return {
+                    "status": "not_found",
+                    "note": f"Keyword '{keyword}' not found on page.",
+                    "meta": result["meta"]
+                }
+
+    # CASE 3 ------------------ CSS Selector extraction
+    if selector:
+        elems = soup.select(selector)
+
+        if not elems:
+            return {
+                "status": "not_found",
+                "note": f"Selector '{selector}' not found on page.",
+                "meta": result["meta"]
+            }
+
+        for el in elems[:max_snippets]:
+            text = _clean_text(el.get_text(" ", strip=True))
+            urls = [a.get("href") for a in el.select("a[href]")]
+            result["selector_results"].append({
+                "selector": selector,
+                "text": text,
+                "urls": urls
+            })
+
+        return result
+
+    return {"status": "not_found", "note": "No matches found", "meta": result["meta"]}
+
+
+TOOLS = [calculator, python_tool, convert_audio_to_text, list_attached_files, read_python_file, SpeechToText, gemini_vision,reverse_string,web_search,scrape_data]
 

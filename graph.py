@@ -22,7 +22,8 @@ def llm_node(state: AgentState):
         response = llm.invoke(state["messages"])
         # Use response.tool_calls directly (LangChain format)
         tool_calls = response.tool_calls if response.tool_calls else []
-        
+        print("RAW RESPONSE:", response)  # or log to a file
+        print("Tool calls in response:", response.tool_calls)
         return {
             "messages": [response],
             "tool_calls": tool_calls
