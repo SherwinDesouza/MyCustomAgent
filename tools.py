@@ -10,7 +10,10 @@ import google.genai as genai
 from google.genai import types
 from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
-from ddgs import DDGS
+try:
+    from ddgs import DDGS
+except ImportError:
+    DDGS = None
 from Scraper import _fetch_html,_clean_text,_word_snippet,_find_nearby_urls
 load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -236,6 +239,13 @@ def web_search(user_query: str) -> str:
              Each result is a dictionary with keys: "title", "href", "body".
              "body" is truncated to the first ~20 words.
     """
+    if DDGS is None:
+        error_msg = {
+            "status": "error",
+            "message": "DuckDuckGo search library not installed. Install with: pip install duckduckgo-search"
+        }
+        return json.dumps(error_msg)
+    
     try:
         results = DDGS().text(user_query, max_results=4, region="us-en")
         truncated = []
@@ -250,7 +260,6 @@ def web_search(user_query: str) -> str:
                 "body": short_body
             })
 
-        # Return as JSON string for Groq/LLM compatibility
         return json.dumps(truncated)
 
     except Exception as e:
@@ -405,5 +414,5 @@ def scrape_data(url: str,
     return {"status": "not_found", "note": "No matches found", "meta": result["meta"]}
 
 
-TOOLS = [calculator, python_tool, convert_audio_to_text, list_attached_files, read_python_file, SpeechToText, gemini_vision,reverse_string,web_search,scrape_data]
+TOOLS = [calculator, python_tool, convert_audio_to_text, list_attached_files, read_python_file, SpeechToText, gemini_vision, reverse_string, web_search, scrape_data]
 
