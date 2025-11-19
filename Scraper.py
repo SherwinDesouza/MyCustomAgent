@@ -100,3 +100,47 @@ def _find_nearby_urls(soup: BeautifulSoup, element) -> List[str]:
     return [u for u in urls if u]
 
 
+def _extract_table_structure(table_element) -> Dict[str, Any]:
+    """Extract table structure as rows and columns."""
+    rows = []
+    headers = []
+    
+    # Try to find header row (thead or first tr with th)
+    thead = table_element.find('thead')
+    if thead:
+        header_row = thead.find('tr')
+        if header_row:
+            headers = [th.get_text(strip=True) for th in header_row.find_all(['th', 'td'])]
+    
+    # If no thead, check first tr for th elements
+    if not headers:
+        first_row = table_element.find('tr')
+        if first_row:
+            th_elements = first_row.find_all('th')
+            if th_elements:
+                headers = [th.get_text(strip=True) for th in th_elements]
+    
+    # Extract all data rows
+    tbody = table_element.find('tbody') or table_element
+    for tr in tbody.find_all('tr'):
+        # Skip header row if it was already processed
+        if tr.find('th') and headers:
+            continue
+            
+        cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+        if not cells:
+            continue
+            
+        # If we have headers, create dict; otherwise use list
+        if headers and len(cells) == len(headers):
+            rows.append(dict(zip(headers, cells)))
+        else:
+            rows.append(cells)
+    
+    return {
+        "headers": headers if headers else None,
+        "rows": rows,
+        "row_count": len(rows)
+    }
+
+

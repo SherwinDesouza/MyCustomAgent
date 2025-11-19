@@ -26,4 +26,5 @@ def test_search(user_query:str) -> str:
         })
     return truncated
 
-test_search("Who did the actor who played Ray in the Polish-language version of Everybody Loves Raymond play in Magda M.? Give only the first name.")
+answer = test_search("What is the first name of the only Malko Competition recipient from the 20th Century (after 1977) whose nationality on record is a country that no longer exists?")
+print(answer)

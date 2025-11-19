@@ -14,7 +14,7 @@ try:
     from ddgs import DDGS
 except ImportError:
     DDGS = None
-from Scraper import _fetch_html,_clean_text,_word_snippet,_find_nearby_urls
+from Scraper import _fetch_html,_clean_text,_word_snippet,_find_nearby_urls,_extract_table_structure
 load_dotenv()
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 RAPID_API_KEY = os.getenv("RAPID_API_KEY")
@@ -359,26 +359,53 @@ def scrape_data(url: str,
             matches.append((idx, idx + len(kw)))
             start = idx + len(kw)
 
-        if matches:
-            for span in matches:
-                snippet, _, _ = _word_snippet(page_text, span, window_words=window_words)
 
+        if matches:
+            for i, span in enumerate(matches):
+               
+                snippet, _, _ = _word_snippet(page_text, span, window_words=window_words)
+          
+
+                # Find the most specific (smallest) element containing the keyword
                 element = None
+                elements_checked = 0
+                candidate_elements = []
+                
+                # Skip these large container elements
+                skip_tags = {'html', 'body', 'main', 'div', 'section', 'article'}
+                
                 for el in soup.find_all():
+                    elements_checked += 1
                     try:
-                        if kw in el.get_text(" ", strip=True).lower():
-                            element = el
-                            break
+                        el_text = el.get_text(" ", strip=True).lower()
+                        if kw in el_text:
+                            # Skip very large elements (likely page containers)
+                            if len(el_text) > 500:
+                                continue
+                            # Prefer smaller, more specific elements
+                            candidate_elements.append((el, len(el_text)))
                     except:
                         continue
+                
+                if candidate_elements:
+                    # Sort by text length (smallest first) and take the most specific
+                    candidate_elements.sort(key=lambda x: x[1])
+                    element = candidate_elements[-1][0]
+                   
 
                 urls = _find_nearby_urls(soup, element) if element else []
-
-                result["snippets"].append({
+                
+                # Calculate size of this snippet entry
+                snippet_entry = {
                     "text": snippet,
                     "urls": urls
-                })
+                }
+                entry_size = len(json.dumps(snippet_entry))
 
+                result["snippets"].append(snippet_entry)
+
+            # Calculate final result size
+            final_size = len(json.dumps(result))
             return result
 
         else:
@@ -392,7 +419,6 @@ def scrape_data(url: str,
     # CASE 3 ------------------ CSS Selector extraction
     if selector:
         elems = soup.select(selector)
-
         if not elems:
             return {
                 "status": "not_found",
@@ -401,13 +427,28 @@ def scrape_data(url: str,
             }
 
         for el in elems[:max_snippets]:
-            text = _clean_text(el.get_text(" ", strip=True))
-            urls = [a.get("href") for a in el.select("a[href]")]
-            result["selector_results"].append({
-                "selector": selector,
-                "text": text,
-                "urls": urls
-            })
+            # Check if this is a table element
+            if el.name == 'table':
+                # Extract table structure
+                table_data = _extract_table_structure(el)
+                urls = [a.get("href") for a in el.select("a[href]")]
+                result["selector_results"].append({
+                    "selector": selector,
+                    "type": "table",
+                    "table_data": table_data,
+                    "text": _clean_text(el.get_text(" ", strip=True)),  # Keep plain text as fallback
+                    "urls": urls
+                })
+            else:
+                # For non-table elements, use existing text extraction
+                text = _clean_text(el.get_text(" ", strip=True))
+                urls = [a.get("href") for a in el.select("a[href]")]
+                result["selector_results"].append({
+                    "selector": selector,
+                    "type": "text",
+                    "text": text,
+                    "urls": urls
+                })
 
         return result
 

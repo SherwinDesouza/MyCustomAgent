@@ -68,33 +68,45 @@ You have access to the following tools:
    - PURPOSE:  
         • Use this tool to locate candidate webpages for further scraping.  
         • Use this tool to explore multiple search queries iteratively.  
-   - NOTES FOR THE AGENT:  
-        • Use web_search BEFORE scraping unless you already know the target page.  
-        • Try alternative queries if the first results are unclear.  
-        • Select the most relevant links and pass them to scrape_data.
+    - NOTES FOR THE AGENT:
+        • Use web_search BEFORE scraping unless you already know the target page.
+        • Try alternative keyword variations if the first results are unclear.
+        • ALWAYS give preference to Wikipedia links if they appear in the results.
+        • If no Wikipedia link exists, choose the most relevant and authoritative page.
+        • Select the best link(s) and pass them to scrape_data for detailed extraction.
 
 10) scrape_data  
-    - Scrape a webpage and extract ONLY relevant contextual text.  
-    - Inputs:  
-        • url: webpage to analyze  
-        • keyword: optional word/phrase to search for  
-        • selector: optional CSS selector (table, list, paragraph, etc.)  
-    - Outputs:  
-        • A dictionary containing extracted text snippets + nearby URLs.  
-    - LOGIC SUMMARY FOR THE AGENT:  
-        • If keyword is provided:  
-            – Search the full page text for keyword matches.  
-            – For each match, return a snippet containing ~20 words before and after.  
-            – Also attempt to capture hyperlinks near the matched element.  
-        • If keyword NOT found AND selector is provided:  
-            – Extract the element(s) matching the CSS selector and return the text.  
-        • If neither keyword nor selector yields results → tell the agent "not_found".  
-    - PURPOSE:  
-        • This tool is for targeted extraction, NOT full-page dumping.  
-        • The agent should call this tool iteratively:  
-              1. Try with a keyword (selector=None).  
-              2. If not useful, try again with CSS selectors.  
-              3. Only extract the smallest needed section to minimize tokens.
+    - Scrape a webpage and extract ONLY relevant contextual text.
+    - Inputs:
+        • url: webpage to analyze
+        • keyword: optional word/phrase to search for
+        • selector: optional CSS selector (table, list, paragraph, etc.)
+    - Outputs:
+        • A dictionary containing extracted text snippets + nearby URLs.
+    - LOGIC SUMMARY FOR THE AGENT:
+        • If keyword is provided:
+            – Search the full page text for keyword matches.
+            – For each match, return a snippet containing ~20 words before and after.
+            – Also attempt to capture hyperlinks near the matched element.
+        • If keyword NOT found AND selector is provided:
+            – Extract the element(s) matching the CSS selector and return the text.
+        • If neither keyword nor selector yields results → return "not_found".
+        • IMPORTANT: After receiving the tool output, CAREFULLY examine each returned snippet,
+        selector result, heading and nearby URL *before* deciding to call any additional tools.
+        The answer to the user may already be present in the extracted snippets — if so,
+        use that evidence to form your final answer and do NOT call more tools.
+    - PURPOSE:
+        • This tool is for targeted extraction, NOT full-page dumping.
+        • The agent should call this tool iteratively:
+            1. Try with a keyword (selector=None).
+            2. Carefully inspect all returned snippets and nearby URLs — verify whether the
+                answer can be produced from the extracted content alone.
+            3. If the extracted content is insufficient, try again with CSS selectors to
+                extract structured elements (tables, lists, infoboxes).
+            4. Only if selector-based extraction still fails, consider searching other pages or
+                using additional tools.
+        • Always prefer to reach a confident, evidence-backed answer from the extracted text
+        before chaining more tool calls (this reduces token usage and avoids unnecessary web requests).
 
 REMEMBER:  
 For simple questions, answer with ONE WORD or ONE NUMBER only.  

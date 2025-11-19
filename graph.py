@@ -10,7 +10,7 @@ import json
 load_dotenv()
 
 llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
+    model="moonshotai/kimi-k2-instruct-0905",
     api_key=os.getenv("GROQ_API_KEY"),
 
 ).bind_tools(TOOLS)
@@ -50,6 +50,9 @@ def tool_node(state: AgentState):
     tool_call = state["tool_calls"][-1]
     tool_name = tool_call["name"]  # LangChain format: direct "name" key
     args = tool_call["args"]  # LangChain format: already parsed dict, not JSON string
+    print("tool called: ",tool_name)
+    print("Tool args: ",args)
+    print("-----")
     
     # Execute tool with error handling
     result = None
