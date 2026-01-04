@@ -26,5 +26,5 @@ RUN npm run build
 WORKDIR /app
 
 # Start server
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "${PORT}"]
+CMD uvicorn api:app --host 0.0.0.0 --port $PORT
 
