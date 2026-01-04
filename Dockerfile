@@ -25,8 +25,6 @@ RUN npm run build
 # Back to root
 WORKDIR /app
 
-# Expose Railway port
-ENV PORT $PORT
-
 # Start server
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "${PORT}"]
+
