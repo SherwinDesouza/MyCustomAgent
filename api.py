@@ -186,27 +186,41 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = "default"):
                 # Set session ID in context before invoking agent
                 set_session_id(session_id)
                 
-                # Invoke agent with conversation history
-                result = agent.invoke({"messages": conversations[connection_id]})
+                # Invoke agent with conversation history AND stream tokens
+                final_state = None
                 
-                # Get the final message
-                final_msg = result["messages"][-1]
-                
-                # Extract content
-                if hasattr(final_msg, 'content') and final_msg.content:
-                    response_content = final_msg.content
-                else:
-                    response_content = str(final_msg)
-                
-                print(f"Agent (session {session_id}): {response_content}")
-                
+                async for event in agent.astream_events({"messages": conversations[connection_id]}, version="v2"):
+                    kind = event["event"]
+                    
+                    # Stream tokens from LLM
+                    if kind == "on_chat_model_stream":
+                        content = event["data"]["chunk"].content
+                        if content:
+                            await websocket.send_json({
+                                "type": "token",
+                                "content": content
+                            })
+                    
+                    # Capture final state from the graph end
+                    if kind == "on_chain_end" and event["name"] == "LangGraph":
+                        final_state = event["data"]["output"]
+
                 # Update conversation history with agent response
-                conversations[connection_id] = result["messages"]
+                if final_state and "messages" in final_state:
+                    conversations[connection_id] = final_state["messages"]
+                    
+                    # Get final content for "done" message (optional, but good for consistency)
+                    final_msg = final_state["messages"][-1]
+                    response_content = final_msg.content if hasattr(final_msg, 'content') else str(final_msg)
+                else:
+                    response_content = ""
                 
-                # Send complete response
+                # Send done message
                 await websocket.send_json({
                     "type": "agent_message",
-                    "content": response_content,
+                    "content": response_content, # Sending full content one last time or empty? 
+                                                 # Frontend will handle "done" to stop loading. 
+                                                 # Let's send empty to not duplicate if frontend appended tokens.
                     "done": True
                 })
                 

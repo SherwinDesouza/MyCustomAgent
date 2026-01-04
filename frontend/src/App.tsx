@@ -55,14 +55,46 @@ function App() {
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
 
-        if (data.type === 'agent_message') {
-          setMessages(prev => [...prev, {
-            id: Date.now().toString(),
-            type: 'agent',
-            content: data.content,
-            timestamp: new Date()
-          }]);
+        if (data.type === 'token') {
           setIsLoading(false);
+          setMessages(prev => {
+            const lastMsg = prev[prev.length - 1];
+            // If the last message is from agent, append to it
+            if (lastMsg && lastMsg.type === 'agent') {
+              return [
+                ...prev.slice(0, -1),
+                { ...lastMsg, content: lastMsg.content + data.content }
+              ];
+            }
+            // Otherwise create new agent message
+            return [...prev, {
+              id: Date.now().toString(),
+              type: 'agent',
+              content: data.content,
+              timestamp: new Date()
+            }];
+          });
+        } else if (data.type === 'agent_message') {
+          setIsLoading(false);
+          // If content is provided and we haven't already streamed it (simple check), add/update?
+          // To be safe and simple: if we have content and checking last message didn't cover it:
+          if (data.content) {
+            setMessages(prev => {
+              const lastMsg = prev[prev.length - 1];
+              // If we already have an agent message at the end, assume it's the stream we just finished.
+              // We update it to ensure final consistency (e.g. formatting fixed by backend?), or ignore.
+              // Let's ignore to prevent jitter/duplication if backend sends full content.
+              if (lastMsg && lastMsg.type === 'agent') {
+                return prev;
+              }
+              return [...prev, {
+                id: Date.now().toString(),
+                type: 'agent',
+                content: data.content,
+                timestamp: new Date()
+              }];
+            });
+          }
         } else if (data.type === 'error') {
           setMessages(prev => [...prev, {
             id: Date.now().toString(),
