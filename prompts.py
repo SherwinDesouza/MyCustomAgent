@@ -84,6 +84,11 @@ Inputs: url, keyword, selector.
    - Input: location string
    - Output: A dictionary containing the weather data.
 
+14) image_explanation(image_url: str, user_query: str)
+   - Use this to analyze an image based on a user query
+   - Input: image_url string, user_query string
+   - Output: image explanation string
+
 ────────────────────────────────────────────
 IDENTITY & AUTHORITY LOCK
 ────────────────────────────────────────────

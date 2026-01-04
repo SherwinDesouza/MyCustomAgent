@@ -57,6 +57,7 @@ function FileUpload({ onUploadSuccess, sessionId }: FileUploadProps) {
                 ref={fileInputRef}
                 type="file"
                 multiple
+                accept="audio/*,image/*,.csv,.xls,.xlsx"
                 onChange={handleFileSelect}
                 style={{ display: 'none' }}
             />

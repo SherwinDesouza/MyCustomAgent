@@ -14,6 +14,16 @@ from graph import build_graph
 from langchain_core.messages import HumanMessage, SystemMessage
 from session_context import set_session_id, get_session_id
 
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {
+    # Audio
+    '.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac',
+    # Images
+    '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
+    # Data
+    '.csv', '.xls', '.xlsx'
+}
+
 # Initialize FastAPI app
 app = FastAPI(title="Conversational Bot API")
 
@@ -88,6 +98,11 @@ async def upload_files(files: List[UploadFile] = File(...), session_id: str = Fo
             # Create safe filename in session directory
             file_path = session_dir / file.filename
             
+            # Validate extension
+            ext = file_path.suffix.lower()
+            if ext not in ALLOWED_EXTENSIONS:
+                 raise HTTPException(status_code=400, detail=f"File type not allowed: {file.filename}. Allowed types: Audio, Images, CSV/Excel")
+
             # Save file
             with open(file_path, "wb") as f:
                 content = await file.read()
