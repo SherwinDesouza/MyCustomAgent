@@ -3,15 +3,16 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langchain_groq import ChatGroq
 from tools import TOOLS
+import os
 from state import AgentState
 from dotenv import load_dotenv
-import os
 import json
 load_dotenv()
 
 llm = ChatGroq(
-    model="moonshotai/kimi-k2-instruct-0905",
+    model="openai/gpt-oss-120b",
     api_key=os.getenv("GROQ_API_KEY"),
+    reasoning_effort="low"
 
 ).bind_tools(TOOLS)
 
@@ -34,7 +35,7 @@ def llm_node(state: AgentState):
         if "tool_use_failed" in error_msg or "failed_generation" in error_msg:
             error_response = AIMessage(
                 content=f"I encountered an error trying to call a tool. This usually happens when trying to use file paths with backslashes. "
-                       f"Please try a different approach: use list_attached_files() first, then read the file content and pass only the code to python_tool, not file reading operations. "
+                       f"Please try a different approach: use list_attached_files() first, then read the file content and pass only the code to run_python_code, not file reading operations. "
                        f"Error details: {error_msg[:200]}"
             )
             return {

@@ -1,10 +1,14 @@
 import json
 import re
+import io
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+
+from utilities import summarize_text
 
 # Optional: Playwright fallback for JS pages
 try:
@@ -100,47 +104,240 @@ def _find_nearby_urls(soup: BeautifulSoup, element) -> List[str]:
     return [u for u in urls if u]
 
 
-def _extract_table_structure(table_element) -> Dict[str, Any]:
+def _extract_table_structure(table) -> Dict[str, Any]:
     """Extract table structure as rows and columns."""
     rows = []
-    headers = []
+
+    for tr in table.find_all("tr"):
+        cols = [td.get_text(strip=True) for td in tr.find_all(["td","th"])]
+        rows.append(cols)
+    return rows
+
+
+def scrape_data(url: str,
+                selector: Optional[str] = None,
+                keyword: Optional[str] = None,
+                js: bool = False,
+                max_snippets: int = 5,
+                window_words: int = 20,
+                user_query: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Scrape a webpage and extract content based on different modes.
     
-    # Try to find header row (thead or first tr with th)
-    thead = table_element.find('thead')
-    if thead:
-        header_row = thead.find('tr')
-        if header_row:
-            headers = [th.get_text(strip=True) for th in header_row.find_all(['th', 'td'])]
+    This tool can operate in three modes:
+    1. Initial exploration: Returns page headings and available selectors (when both selector and keyword are None)
+    2. Keyword search: Finds text snippets containing the keyword with context (when keyword is provided)
+    3. CSS selector extraction: Extracts content matching a CSS selector (when selector is provided)
     
-    # If no thead, check first tr for th elements
-    if not headers:
-        first_row = table_element.find('tr')
-        if first_row:
-            th_elements = first_row.find_all('th')
-            if th_elements:
-                headers = [th.get_text(strip=True) for th in th_elements]
+    Args:
+        url (str): The URL of the webpage to scrape.
+        selector (Optional[str]): CSS selector to extract specific elements (e.g., "article", "table", ".class-name").
+                                  If None and keyword is also None, returns page structure info.
+        keyword (Optional[str]): Search for a specific keyword in the page text. Returns snippets with context.
+        js (bool): Whether to render JavaScript (requires Playwright). Default is False.
+        max_snippets (int): Maximum number of snippets to return. Default is 5.
+        window_words (int): Number of words before and after keyword match to include in snippet. Default is 20.
+        user_query (Optional[str]): The user's original query for query-aware compression. Used internally for summarization.
     
-    # Extract all data rows
-    tbody = table_element.find('tbody') or table_element
-    for tr in tbody.find_all('tr'):
-        # Skip header row if it was already processed
-        if tr.find('th') and headers:
-            continue
-            
-        cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-        if not cells:
-            continue
-            
-        # If we have headers, create dict; otherwise use list
-        if headers and len(cells) == len(headers):
-            rows.append(dict(zip(headers, cells)))
-        else:
-            rows.append(cells)
+    Returns:
+        Dict[str, Any]: A dictionary with the following structure:
+            - status: "ok", "error", "not_found"
+            - snippets: List of keyword-based text snippets with nearby URLs (if keyword search)
+            - selector_results: List of extracted content from CSS selectors (if selector used)
+            - headings: List of page headings h1, h2, h3 (if initial exploration)
+            - selectors_hint: List of available selectors found on page (if initial exploration)
+            - meta: Dictionary with fetched_url and final_url
+            - error/note: Error message or note if something went wrong
     
-    return {
-        "headers": headers if headers else None,
-        "rows": rows,
-        "row_count": len(rows)
+    Usage Notes (for the agent):
+        - First call with only url to explore page structure (get headings and selector hints)
+        - Use keyword parameter to search for specific text content
+        - Use selector parameter to extract structured content (tables, articles, lists, etc.)
+        - Set js=True if the page requires JavaScript rendering
+        - Combine with web_search() to find relevant URLs first, then scrape them
+    """
+
+    fetched = _fetch_html(url, js=js)
+    if "error" in fetched:
+        return {"status": "error", "error": fetched["error"], "meta": {"fetched_url": url}}
+
+    html = fetched["html"]
+    final_url = fetched.get("final_url", url)
+    soup = BeautifulSoup(html, "html.parser")
+
+    for tag in soup(["script", "style", "noscript", "iframe"]):
+        tag.decompose()
+
+    page_text = _clean_text(soup.get_text(" ", strip=True))
+
+    result = {
+        "status": "ok",
+        "snippets": [],
+        "selector_results": [],
+        "headings": [],
+        "meta": {"fetched_url": url, "final_url": final_url}
     }
+
+    # CASE 1 ------------------ Initial call (no keyword + no selector)
+    if not selector and not keyword:
+        headings = [h.get_text(" ", strip=True) for h in soup.select("h1, h2, h3")][:40]
+        selectors_found = []
+
+        for sel in ["table", "article", "main", "ul", "ol"]:
+            if soup.select_one(sel):
+                selectors_found.append(sel)
+
+        result["headings"] = headings
+        result["selectors_hint"] = selectors_found
+        return result
+
+    # CASE 2 ------------------ Keyword search
+    if keyword:
+        low = page_text.lower()
+        kw = keyword.lower()
+
+        matches = []
+        start = 0
+        while len(matches) < max_snippets:
+            idx = low.find(kw, start)
+            if idx == -1:
+                break
+            matches.append((idx, idx + len(kw)))
+            start = idx + len(kw)
+
+
+        if matches:
+            for i, span in enumerate(matches):
+               
+                snippet, _, _ = _word_snippet(page_text, span, window_words=window_words)
+          
+
+                # Find the most specific (smallest) element containing the keyword
+                element = None
+                elements_checked = 0
+                candidate_elements = []
+                
+                # Skip these large container elements
+                skip_tags = {'html', 'body', 'main', 'div', 'section', 'article'}
+                
+                for el in soup.find_all():
+                    elements_checked += 1
+                    try:
+                        el_text = el.get_text(" ", strip=True).lower()
+                        if kw in el_text:
+                            # Skip very large elements (likely page containers)
+                            if len(el_text) > 500:
+                                continue
+                            # Prefer smaller, more specific elements
+                            candidate_elements.append((el, len(el_text)))
+                    except:
+                        continue
+                
+                if candidate_elements:
+                    # Sort by text length (smallest first) and take the most specific
+                    candidate_elements.sort(key=lambda x: x[1])
+                    element = candidate_elements[-1][0]
+                   
+
+                urls = _find_nearby_urls(soup, element) if element else []
+                
+                # Compress the snippet text to reduce token usage
+                try:
+                    compressed_snippet = summarize_text(snippet, query=user_query)
+                except Exception as e:
+                    # If summarization fails, use original snippet
+                    print(f"Summarization failed for snippet: {e}")
+                    compressed_snippet = snippet
+                
+                snippet_entry = {
+                    "text": compressed_snippet,
+                    "urls": urls
+                }
+
+                result["snippets"].append(snippet_entry)
+
+            return result
+
+        else:
+            if not selector:
+                return {
+                    "status": "not_found",
+                    "note": f"Keyword '{keyword}' not found on page.",
+                    "meta": result["meta"]
+                }
+
+    # CASE 3 ------------------ CSS Selector extraction
+    if selector:
+        elems = soup.select(selector)
+        if not elems:
+            return {
+                "status": "not_found",
+                "note": f"Selector '{selector}' not found on page.",
+                "meta": result["meta"]
+            }
+
+        for el in elems[:max_snippets]:
+            # Check if this is a table element
+            if el.name == 'table':
+                urls = [a.get("href") for a in el.select("a[href]")]
+                table_text = _clean_text(el.get_text(" ", strip=True))
+
+                # Use pandas to extract a clean table representation
+                try:
+                    dfs = pd.read_html(io.StringIO(str(el)))
+                    if dfs:
+                        df = dfs[0]
+                        table_data = {
+                            "columns": [str(col) for col in df.columns],
+                            "rows": df.to_dict(orient="records"),
+                            "row_count": len(df)
+                        }
+                    else:
+                        table_data = {
+                            "columns": None,
+                            "rows": [],
+                            "row_count": 0
+                        }
+                except Exception as e:
+                    print(f"Pandas failed to parse table: {e}")
+                    table_data = _extract_table_structure(el)
+
+                # Compress table text while preserving structured data
+                try:
+                    compressed_text = summarize_text(dfs, query=user_query)
+                    print(compressed_text)
+
+                except Exception as e:
+                    print(f"Summarization failed for table: {e}")
+                    compressed_text = table_text
+
+                result["selector_results"].append({
+                    "selector": selector,
+                    "type": "table",
+                    "text": compressed_text,
+                    "urls": urls[:5]
+                })
+            else:
+                # For non-table elements, use existing text extraction
+                text = _clean_text(el.get_text(" ", strip=True))
+                urls = [a.get("href") for a in el.select("a[href]")]
+                
+                # Compress the extracted text
+                try:
+                    compressed_text = summarize_text(text, query=user_query)
+                except Exception as e:
+                    print(f"Summarization failed for text: {e}")
+                    compressed_text = text
+                
+                result["selector_results"].append({
+                    "selector": selector,
+                    "type": "text",
+                    "text": compressed_text,  # Use compressed version
+                    "urls": urls[:5]
+                })
+        
+        return result
+
+    return {"status": "not_found", "note": "No matches found", "meta": result["meta"]}
 
 

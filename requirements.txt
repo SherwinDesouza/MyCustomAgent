@@ -9,3 +9,10 @@ google-genai
 numpy
 ddgs
 bs4
+ollama
+fastapi
+uvicorn[standard]
+python-multipart
+websockets
+matplotlib
+pandas
