@@ -158,11 +158,10 @@ function App() {
   };
 
   const handleFileUploadSuccess = (files: any[]) => {
-    const fileNames = files.map(f => f.filename).join(', ');
     setMessages(prev => [...prev, {
       id: Date.now().toString(),
       type: 'agent',
-      content: `Successfully uploaded: ${fileNames}`,
+      content: 'File Uploaded!',
       timestamp: new Date()
     }]);
   };

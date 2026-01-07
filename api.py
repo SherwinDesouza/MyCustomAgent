@@ -171,7 +171,7 @@ async def upload_files(files: List[UploadFile] = File(...), session_id: str = Fo
 
             uploaded_paths.append(file_info)
             uploaded_paths.append(file_info)
-            notification_content += f"- {file.filename} ({len(content)} bytes)\n"
+            notification_content += f"- {str(file_path.absolute())} ({len(content)} bytes)\n"
             print(f"📁 Uploaded: {file.filename} to session {session_id} ({len(content)} bytes)")
 
         except Exception as e:
