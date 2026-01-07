@@ -125,6 +125,9 @@ async def upload_files(files: List[UploadFile] = File(...), session_id: str = Fo
 
     uploaded_paths = []
     dataset_summaries = []
+    
+    # Notification message builder
+    notification_content = f"User uploaded {len(files)} file(s):\n"
 
     session_dir = FILES_DIR / session_id
     session_dir.mkdir(exist_ok=True)
@@ -167,10 +170,22 @@ async def upload_files(files: List[UploadFile] = File(...), session_id: str = Fo
                     file_info["dataset_error"] = load_result.get("error")
 
             uploaded_paths.append(file_info)
+            uploaded_paths.append(file_info)
+            notification_content += f"- {file.filename} ({len(content)} bytes)\n"
             print(f"📁 Uploaded: {file.filename} to session {session_id} ({len(content)} bytes)")
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error uploading {file.filename}: {str(e)}")
+
+        if dataset_summaries:
+            notification_content += "\nDataset Summaries:\n" + "\n".join([f"- {s['filename']}: {s['summary']}" for s in dataset_summaries])
+
+        # Notify agent
+        if session_id not in conversations:
+             conversations[session_id] = [SystemMessage(content=SYSTEM_PROMPT)]
+        
+        conversations[session_id].append(SystemMessage(content=notification_content))
+        print(f"🔔 Notified session {session_id} about uploads")
 
     return {
         "success": True,
@@ -184,7 +199,11 @@ async def upload_files(files: List[UploadFile] = File(...), session_id: str = Fo
 async def websocket_endpoint(websocket: WebSocket, session_id: str = "default"):
     await websocket.accept()
     connection_id = id(websocket)
-    conversations[connection_id] = [SystemMessage(content=SYSTEM_PROMPT)]
+    
+    # Initialize session if needed
+    if session_id not in conversations:
+        conversations[session_id] = [SystemMessage(content=SYSTEM_PROMPT)]
+        
     print(f"🔌 WebSocket connected: {connection_id} (session: {session_id})")
 
     try:
@@ -196,7 +215,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = "default"):
             if not user_message:
                 continue
 
-            conversations[connection_id].append(HumanMessage(content=user_message))
+            # Append user message to session history
+            conversations[session_id].append(HumanMessage(content=user_message))
 
             # Acknowledge user message
             await websocket.send_json({"type": "user_message", "content": user_message})
@@ -204,8 +224,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = "default"):
             try:
                 set_session_id(session_id)
                 final_state = None
-
-                async for event in agent.astream_events({"messages": conversations[connection_id]}, version="v2"):
+                
+                # Use session history for generation
+                async for event in agent.astream_events({"messages": conversations[session_id]}, version="v2"):
                     kind = event["event"]
 
                     if kind == "on_chat_model_stream":
@@ -216,9 +237,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = "default"):
                     if kind == "on_chain_end" and event["name"] == "LangGraph":
                         final_state = event["data"]["output"]
 
-                # Update conversation history
+                # Update conversation history with agent response
                 if final_state and "messages" in final_state:
-                    conversations[connection_id] = final_state["messages"]
+                    conversations[session_id] = final_state["messages"]
 
                 # Send done message
                 await websocket.send_json({"type": "agent_message", "content": "", "done": True})
@@ -228,7 +249,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = "default"):
 
     except WebSocketDisconnect:
         print(f"🔌 WebSocket disconnected: {connection_id}")
-        conversations.pop(connection_id, None)
+        # data = await websocket.receive_text()
+        # Do NOT remove conversation history on disconnect to allow persistence
+        pass
     except Exception as e:
         print(f"❌ WebSocket error: {str(e)}")
         try:
