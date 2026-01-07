@@ -23,7 +23,7 @@ function FileUpload({ onUploadSuccess, sessionId }: FileUploadProps) {
             });
             formData.append('session_id', sessionId);
 
-            const response = await fetch('http://localhost:8000/upload', {
+            const response = await fetch('/upload', {
                 method: 'POST',
                 body: formData,
             });

@@ -45,7 +45,8 @@ function App() {
     if (!sessionId) return; // Wait for session ID to be initialized
 
     const connectWebSocket = () => {
-      const ws = new WebSocket(`ws://localhost:8000/ws?session_id=${sessionId}`);
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws?session_id=${sessionId}`);
 
       ws.onopen = () => {
         console.log('✅ WebSocket connected');

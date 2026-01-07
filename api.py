@@ -53,13 +53,28 @@ plots_dir.mkdir(parents=True, exist_ok=True)
 # --- Cleanup on shutdown ---
 def cleanup_files():
     print("\n🧹 Cleaning up uploaded files...")
+    directories_to_clean = set()
     for file_path in uploaded_files:
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
                 print(f"   Deleted: {file_path}")
+                directories_to_clean.add(os.path.dirname(file_path))
         except Exception as e:
             print(f"   Error deleting {file_path}: {e}")
+    
+    # Try to remove session directories if empty
+    for dir_path in directories_to_clean:
+        try:
+            if os.path.exists(dir_path):
+                os.rmdir(dir_path)
+                print(f"   Deleted folder: {dir_path}")
+        except OSError:
+            # Directory not empty or other OS error
+            pass
+        except Exception as e:
+            print(f"   Error deleting folder {dir_path}: {e}")
+
     uploaded_files.clear()
     print("✅ Cleanup complete\n")
 
